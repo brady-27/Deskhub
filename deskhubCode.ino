@@ -1,33 +1,3 @@
-/*
-  DeskHub_AllInOne.ino
-  ------------------------------------------------------------
-  One-file DeskHub starter for Arduino IDE / ESP32.
-
-  What this includes:
-  - Wi-Fi connection
-  - Live weather from Open-Meteo API for Cary, NC / 27519
-  - SpotifyEsp32 login + now-playing display data
-  - Clock page using NTP time
-  - Weather page
-  - Spotify page
-  - System status page
-  - Timer page
-  - Stopwatch page
-  - Gear settings button concept
-  - Settings screen concept with Save & Close
-  - Carousel rotation logic
-  - Motion wake logic
-  - Screen timeout logic
-
-  IMPORTANT:
-  This version is made to compile before you own the final screen.
-  It uses placeholder display/touch functions so you can test the APIs
-  and app logic first.
-
-  When you get your exact 7-inch ESP32 touchscreen, replace the
-  "DISPLAY PLACEHOLDER LAYER" functions with the real display/touch driver.
-*/
-
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -35,893 +5,669 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
+#include <Wire.h>
+#include <Arduino_GFX_Library.h>
+#include <TAMC_GT911.h>
 #include <SpotifyEsp32.h>
 
-// ============================================================
-// YOUR SETTINGS
-// ============================================================
-
-const char* WIFI_SSID = "placeholder";
-const char* WIFI_PASS = "placeholder";
-
-const char* SPOTIFY_CLIENT_ID = "placeholder";
+const char* WIFI_SSID     = "placeholder";
+const char* WIFI_PASS     = "placeholder";
+const char* SPOTIFY_CLIENT_ID     = "placeholder";
 const char* SPOTIFY_CLIENT_SECRET = "placeholder";
 
-// Cary, NC / 27519 approximate coordinates
 static const float WEATHER_LAT = placeholder;
 static const float WEATHER_LON = placeholder;
-
-// Eastern Time timezone string for ESP32 time library.
-// Handles EST/EDT daylight saving.
 const char* TZ_INFO = "EST5EDT,M3.2.0/2,M11.1.0/2";
 
-// Hardware placeholders
-#define PIR_PIN 13          // Change later to the PIR signal pin you actually use
-#define TOUCH_ENABLED 0     // Keep 0 until your exact touchscreen driver is wired
+#define SCREEN_W 800
+#define SCREEN_H 480
 
-// ============================================================
-// SPOTIFY OBJECT
-// ============================================================
+#define I2C_SDA    8
+#define I2C_SCL    9
+#define TOUCH_INT  4
+
+#define CH422G_DIR_ADDR 0x22
+#define CH422G_OUT_ADDR 0x23
+
+#define PIR_PIN 13
+
+#define C_BG     0x080C
+#define C_PANEL  0x1082
+#define C_PANEL2 0x18C3
+#define C_TEXT   0xFFFF
+#define C_MUTED  0x9CF3
+#define C_DIM    0x39E7
+#define C_BLUE   0x3B7F
+#define C_BLUE2  0x6CBF
+#define C_BLACK  0x0000
+
+Arduino_ESP32RGBPanel *rgbBus = new Arduino_ESP32RGBPanel(
+    5, 3, 46, 7,
+    1, 2, 42, 41, 40,
+    39, 0, 45, 48, 47, 21,
+    14, 38, 18, 17, 10,
+    0, 8, 4, 8,
+    0, 8, 4, 8,
+    1, 16000000L
+);
+
+Arduino_RGB_Display *gfx = new Arduino_RGB_Display(SCREEN_W, SCREEN_H, rgbBus, 0, true);
+
+TAMC_GT911 ts(I2C_SDA, I2C_SCL, TOUCH_INT, -1, SCREEN_W, SCREEN_H);
 
 Spotify sp(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
 
-// ============================================================
-// DISPLAY PLACEHOLDER LAYER
-// Replace this section when you get the real 7-inch screen.
-// ============================================================
-
-#define SCREEN_WIDTH 800
-#define SCREEN_HEIGHT 480
-
-// RGB565 colors
-#define C_BG       0x080C
-#define C_PANEL    0x1082
-#define C_PANEL2   0x18C3
-#define C_TEXT     0xFFFF
-#define C_MUTED    0x9CF3
-#define C_DIM      0x39E7
-#define C_BLUE     0x3B7F
-#define C_BLUE2    0x6CBF
-#define C_BLACK    0x0000
-#define C_WHITE    0xFFFF
-
-struct TouchPoint {
-  bool pressed;
-  int16_t x;
-  int16_t y;
-};
-
-void displayBegin() {
-  Serial.println("[DISPLAY] Placeholder display active.");
-  Serial.println("[DISPLAY] When you get the screen, replace display functions with real driver calls.");
-}
-
-void displayClear(uint16_t color = C_BG) {
-  // Real display: fill screen here.
-  (void)color;
-}
-
-void displayText(int16_t x, int16_t y, const String& text, uint16_t color = C_TEXT, uint8_t size = 2) {
-  // Real display: set cursor/color/text size/print here.
-  (void)x; (void)y; (void)color; (void)size;
-  Serial.print("[UI] ");
-  Serial.println(text);
-}
-
-void displayRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-  (void)x; (void)y; (void)w; (void)h; (void)color;
-}
-
-void displayFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-  (void)x; (void)y; (void)w; (void)h; (void)color;
-}
-
-void displayCircle(int16_t x, int16_t y, int16_t r, uint16_t color) {
-  (void)x; (void)y; (void)r; (void)color;
-}
-
-void displayFillCircle(int16_t x, int16_t y, int16_t r, uint16_t color) {
-  (void)x; (void)y; (void)r; (void)color;
-}
-
-void displayLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
-  (void)x0; (void)y0; (void)x1; (void)y1; (void)color;
-}
-
-TouchPoint readTouch() {
-  // Real touch driver goes here.
-  // Return pressed=true plus actual x/y.
-  return {false, 0, 0};
-}
-
-// ============================================================
-// APP STATE
-// ============================================================
-
 enum Page {
-  PAGE_CLOCK = 0,
-  PAGE_WEATHER,
-  PAGE_SPOTIFY,
-  PAGE_STATUS,
-  PAGE_TIMER,
-  PAGE_STOPWATCH,
-  PAGE_COUNT
+    PAGE_CLOCK = 0,
+    PAGE_WEATHER,
+    PAGE_SPOTIFY,
+    PAGE_STATUS,
+    PAGE_TIMER,
+    PAGE_STOPWATCH,
+    PAGE_COUNT
 };
 
 Page currentPage = PAGE_CLOCK;
 bool settingsOpen = false;
 
-unsigned long lastCarouselMs = 0;
+unsigned long lastCarouselMs    = 0;
 unsigned long carouselIntervalMs = 10000;
 
-bool motionWakeEnabled = true;
+bool motionWakeEnabled    = true;
 unsigned long screenTimeoutMs = 30UL * 60UL * 1000UL;
-unsigned long lastMotionMs = 0;
+unsigned long lastMotionMs    = 0;
 bool screenAwake = true;
 
 Preferences prefs;
 
-// Weather state
-float weatherTempF = NAN;
-int weatherHumidity = -1;
-float weatherHighF = NAN;
-float weatherLowF = NAN;
-int weatherCode = -1;
+float  weatherTempF  = NAN;
+int    weatherHumidity = -1;
+float  weatherHighF  = NAN;
+float  weatherLowF   = NAN;
+int    weatherCode   = -1;
 String weatherCondition = "Loading";
-String weatherStatus = "Not loaded";
+String weatherStatus    = "Not loaded";
 unsigned long lastWeatherFetchMs = 0;
-const unsigned long weatherFetchIntervalMs = 20UL * 60UL * 1000UL; // 20 minutes
+const unsigned long weatherFetchIntervalMs = 20UL * 60UL * 1000UL;
 
-// Spotify state
 String spotifyArtist = "";
-String spotifyTrack = "";
+String spotifyTrack  = "";
 String spotifyStatus = "Not authenticated";
 unsigned long lastSpotifyFetchMs = 0;
 const unsigned long spotifyFetchIntervalMs = 3000;
 
-// Timer state
-int timerHours = 0;
-int timerMinutes = 5;
-int timerSeconds = 0;
+int  timerHours   = 0;
+int  timerMinutes = 5;
+int  timerSeconds = 0;
 long timerRemainingMs = 0;
 bool timerRunning = false;
-bool timerPaused = false;
+bool timerPaused  = false;
 unsigned long timerLastTickMs = 0;
 
-// Stopwatch state
 bool stopwatchRunning = false;
-unsigned long stopwatchStartMs = 0;
+unsigned long stopwatchStartMs       = 0;
 unsigned long stopwatchAccumulatedMs = 0;
-unsigned long stopwatchLapMs = 0;
 
-// Render control
 bool needsRedraw = true;
 unsigned long lastSerialPagePrintMs = 0;
 
-// ============================================================
-// UTILITY
-// ============================================================
+struct TouchPoint {
+    bool    pressed;
+    int16_t x;
+    int16_t y;
+};
 
 bool inBox(int16_t x, int16_t y, int16_t bx, int16_t by, int16_t bw, int16_t bh) {
-  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+    return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
 }
 
 String twoDigits(int n) {
-  if (n < 10) return "0" + String(n);
-  return String(n);
+    return (n < 10) ? "0" + String(n) : String(n);
 }
 
 String formatTimeMs(unsigned long ms, bool hundredths = false) {
-  unsigned long totalSeconds = ms / 1000UL;
-  unsigned long hours = totalSeconds / 3600UL;
-  unsigned long minutes = (totalSeconds % 3600UL) / 60UL;
-  unsigned long seconds = totalSeconds % 60UL;
-  unsigned long hundred = (ms % 1000UL) / 10UL;
+    unsigned long total   = ms / 1000UL;
+    unsigned long hours   = total / 3600UL;
+    unsigned long minutes = (total % 3600UL) / 60UL;
+    unsigned long seconds = total % 60UL;
+    unsigned long cents   = (ms % 1000UL) / 10UL;
 
-  if (hours > 0) {
-    String s = twoDigits(hours) + ":" + twoDigits(minutes) + ":" + twoDigits(seconds);
-    if (hundredths) s += "." + twoDigits(hundred);
+    String s;
+    if (hours > 0)
+        s = twoDigits(hours) + ":" + twoDigits(minutes) + ":" + twoDigits(seconds);
+    else
+        s = twoDigits(minutes) + ":" + twoDigits(seconds);
+
+    if (hundredths) s += "." + twoDigits(cents);
     return s;
-  }
-
-  String s = twoDigits(minutes) + ":" + twoDigits(seconds);
-  if (hundredths) s += "." + twoDigits(hundred);
-  return s;
 }
 
 String weatherCodeToText(int code) {
-  switch (code) {
-    case 0: return "Clear";
-    case 1: return "Mostly Clear";
-    case 2: return "Partly Cloudy";
-    case 3: return "Cloudy";
-    case 45:
-    case 48: return "Fog";
-    case 51:
-    case 53:
-    case 55: return "Drizzle";
-    case 56:
-    case 57: return "Freezing Drizzle";
-    case 61:
-    case 63:
-    case 65: return "Rain";
-    case 66:
-    case 67: return "Freezing Rain";
-    case 71:
-    case 73:
-    case 75: return "Snow";
-    case 77: return "Snow Grains";
-    case 80:
-    case 81:
-    case 82: return "Rain Showers";
-    case 85:
-    case 86: return "Snow Showers";
-    case 95: return "Thunderstorm";
-    case 96:
-    case 99: return "Thunderstorm + Hail";
-    default: return "Unknown";
-  }
+    switch (code) {
+        case 0:  return "Clear";
+        case 1:  return "Mostly Clear";
+        case 2:  return "Partly Cloudy";
+        case 3:  return "Cloudy";
+        case 45: case 48: return "Fog";
+        case 51: case 53: case 55: return "Drizzle";
+        case 56: case 57: return "Freezing Drizzle";
+        case 61: case 63: case 65: return "Rain";
+        case 66: case 67: return "Freezing Rain";
+        case 71: case 73: case 75: return "Snow";
+        case 77: return "Snow Grains";
+        case 80: case 81: case 82: return "Rain Showers";
+        case 85: case 86: return "Snow Showers";
+        case 95: return "Thunderstorm";
+        case 96: case 99: return "Storm + Hail";
+        default: return "Unknown";
+    }
 }
 
-// ============================================================
-// WIFI + TIME
-// ============================================================
+void ch422g_init() {
+    Wire.beginTransmission(CH422G_DIR_ADDR);
+    Wire.write(0xFF);
+    Wire.endTransmission();
+    delay(5);
+    Wire.beginTransmission(CH422G_OUT_ADDR);
+    Wire.write(0b11111100);
+    Wire.endTransmission();
+    delay(20);
+    Wire.beginTransmission(CH422G_OUT_ADDR);
+    Wire.write(0xFF);
+    Wire.endTransmission();
+    delay(50);
+}
 
 void connectWiFi() {
-  Serial.print("[WIFI] Connecting to ");
-  Serial.println(WIFI_SSID);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("[WIFI] Connected. IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("[WIFI] Failed to connect.");
-  }
+    Serial.print("[WIFI] Connecting...");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    unsigned long t = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t < 20000) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println();
+    if (WiFi.status() == WL_CONNECTED)
+        Serial.println("[WIFI] Connected: " + WiFi.localIP().toString());
+    else
+        Serial.println("[WIFI] Failed.");
 }
 
 void setupTime() {
-  configTzTime(TZ_INFO, "pool.ntp.org", "time.nist.gov");
-  Serial.println("[TIME] NTP time setup started.");
+    configTzTime(TZ_INFO, "pool.ntp.org", "time.nist.gov");
 }
 
 String getClockString() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return "--:--";
-
-  int hour = timeinfo.tm_hour;
-  String suffix = "AM";
-  if (hour >= 12) suffix = "PM";
-  hour %= 12;
-  if (hour == 0) hour = 12;
-
-  return String(hour) + ":" + twoDigits(timeinfo.tm_min) + " " + suffix;
+    struct tm t;
+    if (!getLocalTime(&t)) return "--:--";
+    int h = t.tm_hour;
+    const char* suf = h >= 12 ? "PM" : "AM";
+    h %= 12;
+    if (h == 0) h = 12;
+    return String(h) + ":" + twoDigits(t.tm_min) + " " + suf;
 }
 
 String getDateString() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return "Loading date";
-
-  char buffer[40];
-  strftime(buffer, sizeof(buffer), "%A, %B %d", &timeinfo);
-  return String(buffer);
+    struct tm t;
+    if (!getLocalTime(&t)) return "Loading...";
+    char buf[40];
+    strftime(buf, sizeof(buf), "%A, %B %d", &t);
+    return String(buf);
 }
-
-// ============================================================
-// WEATHER API: Open-Meteo
-// ============================================================
 
 void fetchWeather() {
-  if (WiFi.status() != WL_CONNECTED) {
-    weatherStatus = "Wi-Fi offline";
-    return;
-  }
+    if (WiFi.status() != WL_CONNECTED) { weatherStatus = "Wi-Fi offline"; return; }
 
-  WiFiClientSecure client;
-  client.setInsecure(); // Accept HTTPS cert without a stored root certificate for this starter project.
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
 
-  HTTPClient http;
+    String url = "https://api.open-meteo.com/v1/forecast?";
+    url += "latitude=" + String(WEATHER_LAT, 4);
+    url += "&longitude=" + String(WEATHER_LON, 4);
+    url += "&current=temperature_2m,relative_humidity_2m,weather_code";
+    url += "&daily=temperature_2m_max,temperature_2m_min";
+    url += "&temperature_unit=fahrenheit&timezone=auto";
 
-  String url = "https://api.open-meteo.com/v1/forecast?";
-  url += "latitude=" + String(WEATHER_LAT, 4);
-  url += "&longitude=" + String(WEATHER_LON, 4);
-  url += "&current=temperature_2m,relative_humidity_2m,weather_code";
-  url += "&daily=temperature_2m_max,temperature_2m_min";
-  url += "&temperature_unit=fahrenheit";
-  url += "&timezone=auto";
+    if (!http.begin(client, url)) { weatherStatus = "HTTP begin failed"; return; }
 
-  Serial.print("[WEATHER] GET ");
-  Serial.println(url);
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        weatherStatus = "HTTP " + String(code);
+        http.end();
+        return;
+    }
 
-  if (!http.begin(client, url)) {
-    weatherStatus = "HTTP begin failed";
-    Serial.println("[WEATHER] HTTP begin failed");
-    return;
-  }
-
-  int code = http.GET();
-  if (code != HTTP_CODE_OK) {
-    weatherStatus = "HTTP " + String(code);
-    Serial.print("[WEATHER] HTTP error: ");
-    Serial.println(code);
+    String payload = http.getString();
     http.end();
-    return;
-  }
 
-  String payload = http.getString();
-  http.end();
+    JsonDocument doc;
+    if (deserializeJson(doc, payload)) { weatherStatus = "JSON error"; return; }
 
-  // Size chosen for Open-Meteo current+daily response.
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, payload);
+    weatherTempF    = doc["current"]["temperature_2m"] | NAN;
+    weatherHumidity = doc["current"]["relative_humidity_2m"] | -1;
+    weatherCode     = doc["current"]["weather_code"] | -1;
+    weatherHighF    = doc["daily"]["temperature_2m_max"][0] | NAN;
+    weatherLowF     = doc["daily"]["temperature_2m_min"][0] | NAN;
+    weatherCondition = weatherCodeToText(weatherCode);
+    weatherStatus    = "Online";
+    lastWeatherFetchMs = millis();
 
-  if (err) {
-    weatherStatus = "JSON parse failed";
-    Serial.print("[WEATHER] JSON error: ");
-    Serial.println(err.c_str());
-    return;
-  }
-
-  weatherTempF = doc["current"]["temperature_2m"] | NAN;
-  weatherHumidity = doc["current"]["relative_humidity_2m"] | -1;
-  weatherCode = doc["current"]["weather_code"] | -1;
-  weatherHighF = doc["daily"]["temperature_2m_max"][0] | NAN;
-  weatherLowF = doc["daily"]["temperature_2m_min"][0] | NAN;
-  weatherCondition = weatherCodeToText(weatherCode);
-  weatherStatus = "Online";
-  lastWeatherFetchMs = millis();
-
-  Serial.println("[WEATHER] Updated:");
-  Serial.println("  Temp: " + String(weatherTempF, 1));
-  Serial.println("  Condition: " + weatherCondition);
-  Serial.println("  High: " + String(weatherHighF, 1));
-  Serial.println("  Low: " + String(weatherLowF, 1));
-  Serial.println("  Humidity: " + String(weatherHumidity));
+    Serial.printf("[WEATHER] %.1f°F  %s  Hi:%.0f Lo:%.0f  Hum:%d%%\n",
+        weatherTempF, weatherCondition.c_str(), weatherHighF, weatherLowF, weatherHumidity);
 }
 
-// ============================================================
-// SPOTIFY
-// ============================================================
-
 void setupSpotify() {
-  Serial.println("[SPOTIFY] Starting SpotifyEsp32 auth flow...");
-  Serial.println("[SPOTIFY] If this is your first run, watch Serial Monitor for auth instructions.");
-  sp.begin();
-  spotifyStatus = "Auth needed";
+    sp.begin();
+    spotifyStatus = "Auth needed";
 }
 
 void updateSpotify() {
-  if (WiFi.status() != WL_CONNECTED) {
-    spotifyStatus = "Wi-Fi offline";
-    return;
-  }
+    if (WiFi.status() != WL_CONNECTED) { spotifyStatus = "Wi-Fi offline"; return; }
+    if (!sp.is_auth()) { sp.handle_client(); spotifyStatus = "Auth needed"; return; }
+    if (millis() - lastSpotifyFetchMs < spotifyFetchIntervalMs) return;
+    lastSpotifyFetchMs = millis();
 
-  if (!sp.is_auth()) {
-    sp.handle_client();
-    spotifyStatus = "Auth needed";
-    return;
-  }
-
-  if (millis() - lastSpotifyFetchMs < spotifyFetchIntervalMs) return;
-  lastSpotifyFetchMs = millis();
-
-  String currentArtist = sp.current_artist_names();
-  String currentTrack = sp.current_track_name();
-
-  if (currentArtist.length() > 0 && currentArtist != "Something went wrong" && currentArtist != "null") {
-    spotifyArtist = currentArtist;
-  }
-
-  if (currentTrack.length() > 0 && currentTrack != "Something went wrong" && currentTrack != "null") {
-    spotifyTrack = currentTrack;
-  }
-
-  spotifyStatus = "Connected";
+    String a = sp.current_artist_names();
+    String t = sp.current_track_name();
+    if (a.length() && a != "Something went wrong" && a != "null") spotifyArtist = a;
+    if (t.length() && t != "Something went wrong" && t != "null") spotifyTrack  = t;
+    spotifyStatus = "Connected";
 }
 
-// ============================================================
-// SETTINGS STORAGE
-// ============================================================
-
 void loadSettings() {
-  prefs.begin("deskhub", false);
-  carouselIntervalMs = prefs.getULong("carousel", 10000);
-  screenTimeoutMs = prefs.getULong("timeout", 30UL * 60UL * 1000UL);
-  motionWakeEnabled = prefs.getBool("motion", true);
-  prefs.end();
+    prefs.begin("deskhub", false);
+    carouselIntervalMs = prefs.getULong("carousel", 10000);
+    screenTimeoutMs    = prefs.getULong("timeout",  30UL * 60UL * 1000UL);
+    motionWakeEnabled  = prefs.getBool("motion",    true);
+    prefs.end();
 }
 
 void saveSettings() {
-  prefs.begin("deskhub", false);
-  prefs.putULong("carousel", carouselIntervalMs);
-  prefs.putULong("timeout", screenTimeoutMs);
-  prefs.putBool("motion", motionWakeEnabled);
-  prefs.end();
-  Serial.println("[SETTINGS] Saved.");
+    prefs.begin("deskhub", false);
+    prefs.putULong("carousel", carouselIntervalMs);
+    prefs.putULong("timeout",  screenTimeoutMs);
+    prefs.putBool("motion",    motionWakeEnabled);
+    prefs.end();
+    Serial.println("[SETTINGS] Saved.");
 }
-
-// ============================================================
-// TIMER + STOPWATCH LOGIC
-// ============================================================
 
 void startTimer() {
-  if (timerRemainingMs <= 0) {
-    timerRemainingMs = ((long)timerHours * 3600L + (long)timerMinutes * 60L + timerSeconds) * 1000L;
-  }
-  timerRunning = true;
-  timerPaused = false;
-  timerLastTickMs = millis();
-  needsRedraw = true;
+    if (timerRemainingMs <= 0)
+        timerRemainingMs = ((long)timerHours * 3600L + timerMinutes * 60L + timerSeconds) * 1000L;
+    timerRunning = true;
+    timerPaused  = false;
+    timerLastTickMs = millis();
+    needsRedraw = true;
 }
 
-void pauseTimer() {
-  timerRunning = false;
-  timerPaused = true;
-  needsRedraw = true;
-}
+void pauseTimer() { timerRunning = false; timerPaused = true; needsRedraw = true; }
 
-void cancelTimer() {
-  timerRunning = false;
-  timerPaused = false;
-  timerRemainingMs = ((long)timerHours * 3600L + (long)timerMinutes * 60L + timerSeconds) * 1000L;
-  needsRedraw = true;
+void resetTimer() {
+    timerRunning = false;
+    timerPaused  = false;
+    timerRemainingMs = ((long)timerHours * 3600L + timerMinutes * 60L + timerSeconds) * 1000L;
+    needsRedraw = true;
 }
 
 void updateTimer() {
-  if (!timerRunning) return;
-
-  unsigned long now = millis();
-  unsigned long delta = now - timerLastTickMs;
-  timerLastTickMs = now;
-
-  timerRemainingMs -= (long)delta;
-  if (timerRemainingMs <= 0) {
-    timerRemainingMs = 0;
-    timerRunning = false;
-    timerPaused = false;
-    Serial.println("[TIMER] Done!");
-  }
+    if (!timerRunning) return;
+    unsigned long now = millis();
+    timerRemainingMs -= (long)(now - timerLastTickMs);
+    timerLastTickMs = now;
+    if (timerRemainingMs <= 0) {
+        timerRemainingMs = 0;
+        timerRunning = false;
+        timerPaused  = false;
+        Serial.println("[TIMER] Done!");
+    }
 }
 
 void startStopwatch() {
-  if (!stopwatchRunning) {
-    stopwatchStartMs = millis();
-    stopwatchRunning = true;
-    needsRedraw = true;
-  }
+    if (!stopwatchRunning) {
+        stopwatchStartMs = millis();
+        stopwatchRunning = true;
+        needsRedraw = true;
+    }
 }
 
 void pauseStopwatch() {
-  if (stopwatchRunning) {
-    stopwatchAccumulatedMs += millis() - stopwatchStartMs;
-    stopwatchRunning = false;
-    needsRedraw = true;
-  }
+    if (stopwatchRunning) {
+        stopwatchAccumulatedMs += millis() - stopwatchStartMs;
+        stopwatchRunning = false;
+        needsRedraw = true;
+    }
 }
 
 void resetStopwatch() {
-  stopwatchRunning = false;
-  stopwatchStartMs = 0;
-  stopwatchAccumulatedMs = 0;
-  stopwatchLapMs = 0;
-  needsRedraw = true;
+    stopwatchRunning       = false;
+    stopwatchStartMs       = 0;
+    stopwatchAccumulatedMs = 0;
+    needsRedraw = true;
 }
 
 unsigned long currentStopwatchMs() {
-  if (stopwatchRunning) {
-    return stopwatchAccumulatedMs + (millis() - stopwatchStartMs);
-  }
-  return stopwatchAccumulatedMs;
+    if (stopwatchRunning)
+        return stopwatchAccumulatedMs + (millis() - stopwatchStartMs);
+    return stopwatchAccumulatedMs;
 }
 
-// ============================================================
-// UI DRAW HELPERS
-// ============================================================
+TouchPoint readTouch() {
+    ts.read();
+    if (ts.isTouched && ts.touches > 0)
+        return { true, (int16_t)ts.points[0].x, (int16_t)ts.points[0].y };
+    return { false, 0, 0 };
+}
 
-void drawPageDots(int activePage) {
-  int total = PAGE_COUNT;
-  int spacing = 22;
-  int startX = SCREEN_WIDTH / 2 - ((total - 1) * spacing) / 2;
-  int y = SCREEN_HEIGHT - 45;
+void gfxText(int16_t x, int16_t y, const String& s, uint16_t color = C_TEXT, uint8_t size = 2) {
+    gfx->setTextColor(color);
+    gfx->setTextSize(size);
+    gfx->setCursor(x, y);
+    gfx->print(s);
+}
 
-  for (int i = 0; i < total; i++) {
-    uint16_t color = (i == activePage) ? C_BLUE : C_DIM;
-    displayFillCircle(startX + i * spacing, y, 5, color);
-  }
+void drawPageDots(int active) {
+    int spacing = 22;
+    int startX  = SCREEN_W / 2 - ((PAGE_COUNT - 1) * spacing) / 2;
+    int y = SCREEN_H - 45;
+    for (int i = 0; i < PAGE_COUNT; i++)
+        gfx->fillCircle(startX + i * spacing, y, 5, i == active ? C_BLUE : C_DIM);
 }
 
 void drawGearButton() {
-  // Real display: draw gear icon. Placeholder prints only.
-  displayText(SCREEN_WIDTH - 78, 32, "[gear]", C_TEXT, 1);
+    gfx->fillRect(SCREEN_W - 90, 15, 75, 40, C_PANEL);
+    gfxText(SCREEN_W - 78, 23, "[gear]", C_TEXT, 1);
 }
 
 void drawTopLine() {
-  displayLine(300, 45, 500, 45, C_DIM);
-  displayFillCircle(400, 45, 4, C_BLUE);
+    gfx->drawLine(300, 45, 500, 45, C_DIM);
+    gfx->fillCircle(400, 45, 4, C_BLUE);
 }
 
-void drawPill(int x, int y, int w, int h, const String& text, uint16_t iconColor = C_BLUE) {
-  displayFillRect(x, y, w, h, C_PANEL);
-  displayRect(x, y, w, h, C_PANEL2);
-  displayText(x + 22, y + 18, text, C_TEXT, 2);
-  (void)iconColor;
+void drawPill(int x, int y, int w, int h, const String& text) {
+    gfx->fillRect(x, y, w, h, C_PANEL);
+    gfx->drawRect(x, y, w, h, C_PANEL2);
+    gfxText(x + 14, y + 13, text, C_TEXT, 1);
 }
 
 void drawSegmentedControl(bool timerSelected) {
-  displayFillRect(280, 75, 240, 42, C_PANEL);
-  if (timerSelected) {
-    displayFillRect(280, 75, 120, 42, C_PANEL2);
-    displayText(317, 87, "Timer", C_TEXT, 2);
-    displayText(430, 87, "Stopwatch", C_MUTED, 2);
-  } else {
-    displayFillRect(400, 75, 120, 42, C_PANEL2);
-    displayText(317, 87, "Timer", C_MUTED, 2);
-    displayText(420, 87, "Stopwatch", C_TEXT, 2);
-  }
+    gfx->fillRect(280, 75, 240, 42, C_PANEL);
+    if (timerSelected) {
+        gfx->fillRect(280, 75, 120, 42, C_PANEL2);
+        gfxText(310, 87, "Timer",     C_TEXT,  2);
+        gfxText(420, 87, "Stopwatch", C_MUTED, 1);
+    } else {
+        gfx->fillRect(400, 75, 120, 42, C_PANEL2);
+        gfxText(310, 87, "Timer",     C_MUTED, 1);
+        gfxText(415, 87, "Stopwatch", C_TEXT,  2);
+    }
 }
 
-// ============================================================
-// UI PAGES
-// ============================================================
-
 void drawClockPage() {
-  displayClear();
-  drawGearButton();
-
-  String timeStr = getClockString();
-  String dateStr = getDateString();
-
-  displayText(285, 170, timeStr, C_TEXT, 6);
-  displayText(285, 245, dateStr, C_TEXT, 3);
-  drawPageDots(PAGE_CLOCK);
-
-  Serial.println("----- PAGE: CLOCK -----");
-  Serial.println(timeStr);
-  Serial.println(dateStr);
+    gfx->fillScreen(C_BG);
+    drawGearButton();
+    gfxText(220, 165, getClockString(), C_TEXT, 6);
+    gfxText(250, 245, getDateString(),  C_TEXT, 3);
+    drawPageDots(PAGE_CLOCK);
 }
 
 void drawWeatherPage() {
-  displayClear();
-  drawTopLine();
-  drawGearButton();
+    gfx->fillScreen(C_BG);
+    drawTopLine();
+    drawGearButton();
+    gfxText(325, 80, "WEATHER", C_TEXT, 3);
 
-  displayText(330, 85, "WEATHER", C_TEXT, 3);
+    String tempStr = isnan(weatherTempF) ? "--°F" : String((int)round(weatherTempF)) + "F";
+    String hiStr   = isnan(weatherHighF)  ? "Hi --" : "Hi " + String((int)round(weatherHighF));
+    String loStr   = isnan(weatherLowF)   ? "Lo --" : "Lo " + String((int)round(weatherLowF));
+    String humStr  = weatherHumidity < 0  ? "Hum --%" : "Hum " + String(weatherHumidity) + "%";
 
-  String tempText = isnan(weatherTempF) ? "--°F" : String((int)round(weatherTempF)) + "°F";
-  String highText = isnan(weatherHighF) ? "High --°" : "High " + String((int)round(weatherHighF)) + "°";
-  String lowText = isnan(weatherLowF) ? "Low --°" : "Low " + String((int)round(weatherLowF)) + "°";
-  String humText = weatherHumidity < 0 ? "Humidity --%" : "Humidity " + String(weatherHumidity) + "%";
+    gfxText(340, 150, tempStr,          C_TEXT,  6);
+    gfxText(320, 245, weatherCondition, C_TEXT,  3);
+    gfxText(340, 285, "Cary, NC",       C_MUTED, 2);
 
-  displayText(365, 155, tempText, C_TEXT, 6);
-  displayText(340, 245, weatherCondition, C_TEXT, 3);
-  displayText(350, 285, "Cary, NC", C_MUTED, 2);
+    drawPill( 80, 360, 180, 48, hiStr);
+    drawPill(300, 360, 180, 48, loStr);
+    drawPill(520, 360, 210, 48, humStr);
 
-  drawPill(85, 365, 190, 52, highText);
-  drawPill(305, 365, 190, 52, lowText);
-  drawPill(525, 365, 210, 52, humText);
-
-  drawPageDots(PAGE_WEATHER);
-
-  Serial.println("----- PAGE: WEATHER -----");
-  Serial.println(tempText + " " + weatherCondition + " " + humText);
-  Serial.println(weatherStatus);
+    drawPageDots(PAGE_WEATHER);
 }
 
 void drawSpotifyPage() {
-  displayClear();
-  drawTopLine();
-  drawGearButton();
+    gfx->fillScreen(C_BG);
+    drawTopLine();
+    drawGearButton();
+    gfxText(330, 75, "SPOTIFY", C_TEXT, 3);
 
-  displayText(345, 80, "SPOTIFY", C_TEXT, 3);
+    String track  = spotifyTrack.length()  ? spotifyTrack  : "Nothing playing";
+    String artist = spotifyArtist.length() ? spotifyArtist : "---";
 
-  String track = spotifyTrack.length() ? spotifyTrack : "No track";
-  String artist = spotifyArtist.length() ? spotifyArtist : "No artist";
+    gfx->fillRect(80, 130, 210, 160, C_PANEL2);
+    gfxText(112, 200, "Album Art", C_MUTED, 2);
 
-  // Album art placeholder
-  displayFillRect(80, 135, 210, 150, C_PANEL2);
-  displayText(112, 197, "Album Art", C_MUTED, 2);
+    gfxText(355, 140, track,  C_TEXT,  3);
+    gfxText(355, 190, artist, C_MUTED, 2);
+    gfxText(355, 220, "Now Playing", C_MUTED, 1);
 
-  displayText(360, 145, track, C_TEXT, 4);
-  displayText(360, 195, artist, C_TEXT, 3);
-  displayText(360, 235, "Now Playing", C_MUTED, 2);
+    gfxText(370, 295, "|<",  C_TEXT, 3);
+    gfxText(460, 295, "||",  C_TEXT, 3);
+    gfxText(560, 295, ">|",  C_TEXT, 3);
 
-  // Playback buttons placeholders
-  displayText(375, 300, "|<", C_TEXT, 3);
-  displayText(475, 300, "||", C_TEXT, 3);
-  displayText(575, 300, ">|", C_TEXT, 3);
+    gfx->drawLine(90, 385, 650, 385, C_DIM);
+    gfx->drawLine(90, 385, 300, 385, C_BLUE);
+    gfx->fillCircle(300, 385, 6, C_BLUE);
 
-  // Progress bar
-  displayLine(90, 390, 650, 390, C_DIM);
-  displayLine(90, 390, 300, 390, C_BLUE);
-  displayFillCircle(300, 390, 6, C_BLUE);
-  displayText(90, 405, "1:24", C_MUTED, 2);
-  displayText(620, 405, "3:20", C_MUTED, 2);
+    gfxText(720, 120, "vol", C_MUTED, 1);
+    gfx->drawLine(730, 150, 730, 330, C_DIM);
+    gfx->drawLine(730, 240, 730, 330, C_BLUE);
+    gfx->fillCircle(730, 240, 7, C_BLUE);
 
-  // Vertical volume slider
-  displayText(720, 125, "vol", C_MUTED, 1);
-  displayLine(730, 155, 730, 330, C_DIM);
-  displayLine(730, 240, 730, 330, C_BLUE);
-  displayFillCircle(730, 240, 7, C_BLUE);
-
-  drawPageDots(PAGE_SPOTIFY);
-
-  Serial.println("----- PAGE: SPOTIFY -----");
-  Serial.println(track + " - " + artist);
-  Serial.println(spotifyStatus);
+    drawPageDots(PAGE_SPOTIFY);
 }
 
 void drawStatusPage() {
-  displayClear();
-  drawTopLine();
-  drawGearButton();
+    gfx->fillScreen(C_BG);
+    drawTopLine();
+    drawGearButton();
+    gfxText(240, 75, "SYSTEM STATUS", C_TEXT, 3);
 
-  displayText(260, 80, "SYSTEM STATUS", C_TEXT, 3);
+    drawPill(110, 140, 580, 44, "Motion:  " + String(motionWakeEnabled ? "Active" : "Off"));
+    drawPill(110, 194, 580, 44, "Timeout: " + String(screenTimeoutMs / 60000UL) + " min");
+    drawPill(110, 248, 580, 44, "Wi-Fi:   " + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Offline"));
+    drawPill(110, 302, 580, 44, "Weather: " + weatherStatus);
+    drawPill(110, 356, 580, 44, "Spotify: " + spotifyStatus);
 
-  drawPill(120, 145, 560, 45, "Motion Sensor: " + String(motionWakeEnabled ? "Active" : "Off"));
-  drawPill(120, 200, 560, 45, "Screen Timeout: " + String(screenTimeoutMs / 60000UL) + " min");
-  drawPill(120, 255, 560, 45, "Wi-Fi: " + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Offline"));
-  drawPill(120, 310, 560, 45, "Weather API: " + weatherStatus);
-  drawPill(120, 365, 560, 45, "Spotify API: " + spotifyStatus);
-
-  drawPageDots(PAGE_STATUS);
-
-  Serial.println("----- PAGE: SYSTEM STATUS -----");
+    drawPageDots(PAGE_STATUS);
 }
 
 void drawTimerPage() {
-  displayClear();
-  drawTopLine();
-  drawGearButton();
-  drawSegmentedControl(true);
+    gfx->fillScreen(C_BG);
+    drawTopLine();
+    drawGearButton();
+    drawSegmentedControl(true);
 
-  String selected = twoDigits(timerHours) + " : " + twoDigits(timerMinutes) + " : " + twoDigits(timerSeconds);
-  String remaining = formatTimeMs(timerRemainingMs > 0 ? timerRemainingMs : ((long)timerHours * 3600L + timerMinutes * 60L + timerSeconds) * 1000L);
+    String setStr = twoDigits(timerHours) + " : " + twoDigits(timerMinutes) + " : " + twoDigits(timerSeconds);
+    gfxText(275, 145, setStr, C_TEXT, 4);
+    gfxText(235, 210, "HOURS      MINUTES    SECONDS", C_MUTED, 1);
 
-  displayText(295, 150, selected, C_TEXT, 5);
-  displayText(245, 215, "HOURS      MINUTES     SECONDS", C_MUTED, 2);
-  displayText(365, 260, "Set", C_BLUE, 2);
+    if (timerRunning || timerPaused) {
+        gfxText(310, 275, formatTimeMs(timerRemainingMs), C_TEXT, 4);
+    }
 
-  if (timerRunning || timerPaused) {
-    displayText(320, 310, remaining, C_TEXT, 4);
-  }
+    String leftLabel  = (timerRunning || timerPaused) ? "Cancel" : "Reset";
+    String rightLabel = timerRunning ? "Pause" : "Start";
 
-  String left = (timerRunning || timerPaused) ? "Cancel" : "Cancel";
-  String right = timerRunning ? "Pause" : "Start";
+    gfxText(220, 380, leftLabel,  C_TEXT, 3);
+    gfxText(480, 380, rightLabel, C_TEXT, 3);
 
-  displayText(250, 385, left, C_TEXT, 3);
-  displayText(480, 385, right, C_TEXT, 3);
-
-  drawPageDots(PAGE_TIMER);
-
-  Serial.println("----- PAGE: TIMER -----");
-  Serial.println("Selected: " + selected + " Remaining: " + remaining);
+    drawPageDots(PAGE_TIMER);
 }
 
 void drawStopwatchPage() {
-  displayClear();
-  drawTopLine();
-  drawGearButton();
-  drawSegmentedControl(false);
+    gfx->fillScreen(C_BG);
+    drawTopLine();
+    drawGearButton();
+    drawSegmentedControl(false);
 
-  unsigned long sw = currentStopwatchMs();
-  String swText = formatTimeMs(sw, true);
+    gfxText(215, 160, formatTimeMs(currentStopwatchMs(), true), C_TEXT, 5);
 
-  displayText(250, 165, swText, C_TEXT, 6);
-  displayText(310, 245, "Lap 1     " + swText, C_BLUE2, 2);
+    gfxText(220, 360, "Reset", C_TEXT, 3);
+    gfxText(490, 360, stopwatchRunning ? "Pause" : "Start", C_TEXT, 3);
 
-  displayText(245, 365, "Reset", C_TEXT, 3);
-  displayText(500, 365, stopwatchRunning ? "Pause" : "Start", C_TEXT, 3);
-
-  drawPageDots(PAGE_STOPWATCH);
-
-  Serial.println("----- PAGE: STOPWATCH -----");
-  Serial.println(swText);
+    drawPageDots(PAGE_STOPWATCH);
 }
 
 void drawSettingsScreen() {
-  displayClear();
+    gfx->fillScreen(C_BG);
+    gfxText(305, 45, "SETTINGS", C_TEXT, 3);
 
-  displayText(310, 50, "SETTINGS", C_TEXT, 3);
-  displayText(700, 50, "[gear]", C_BLUE, 1);
+    drawPill(110, 100, 580, 42, "Brightness:  70%");
+    drawPill(110, 152, 580, 42, "Carousel:    " + String(carouselIntervalMs / 1000UL) + " sec");
+    drawPill(110, 204, 580, 42, "Motion Wake: " + String(motionWakeEnabled ? "On" : "Off"));
+    drawPill(110, 256, 580, 42, "Timeout:     " + String(screenTimeoutMs / 60000UL) + " min");
+    drawPill(110, 308, 580, 42, "Theme:       Dark");
+    drawPill(110, 360, 580, 42, "Wi-Fi:       " + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Offline"));
+    drawPill(110, 412, 580, 42, "Spotify:     " + spotifyStatus);
 
-  drawPill(120, 105, 560, 42, "Brightness: 70%");
-  drawPill(120, 155, 560, 42, "Carousel Rotation: " + String(carouselIntervalMs / 1000UL) + " sec");
-  drawPill(120, 205, 560, 42, "Motion Wake: " + String(motionWakeEnabled ? "On" : "Off"));
-  drawPill(120, 255, 560, 42, "Screen Timeout: " + String(screenTimeoutMs / 60000UL) + " min");
-  drawPill(120, 305, 560, 42, "Theme: Dark");
-  drawPill(120, 355, 560, 42, "Wi-Fi: " + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Offline"));
-  drawPill(120, 405, 560, 42, "Spotify: " + spotifyStatus);
-
-  displayFillRect(280, 450, 240, 45, C_PANEL2);
-  displayText(322, 462, "Save & Close", C_BLUE2, 2);
-
-  Serial.println("----- SCREEN: SETTINGS -----");
+    gfx->fillRect(280, 448, 240, 44, C_PANEL2);
+    gfxText(314, 458, "Save & Close", C_BLUE2, 2);
 }
 
 void drawCurrentScreen() {
-  if (!screenAwake) {
-    displayClear(C_BLACK);
-    return;
-  }
+    if (!screenAwake) { gfx->fillScreen(C_BLACK); return; }
+    if (settingsOpen) { drawSettingsScreen(); return; }
 
-  if (settingsOpen) {
-    drawSettingsScreen();
-    return;
-  }
-
-  switch (currentPage) {
-    case PAGE_CLOCK: drawClockPage(); break;
-    case PAGE_WEATHER: drawWeatherPage(); break;
-    case PAGE_SPOTIFY: drawSpotifyPage(); break;
-    case PAGE_STATUS: drawStatusPage(); break;
-    case PAGE_TIMER: drawTimerPage(); break;
-    case PAGE_STOPWATCH: drawStopwatchPage(); break;
-    default: drawClockPage(); break;
-  }
-
-  needsRedraw = false;
+    switch (currentPage) {
+        case PAGE_CLOCK:     drawClockPage();     break;
+        case PAGE_WEATHER:   drawWeatherPage();   break;
+        case PAGE_SPOTIFY:   drawSpotifyPage();   break;
+        case PAGE_STATUS:    drawStatusPage();    break;
+        case PAGE_TIMER:     drawTimerPage();     break;
+        case PAGE_STOPWATCH: drawStopwatchPage(); break;
+        default:             drawClockPage();     break;
+    }
+    needsRedraw = false;
 }
 
-// ============================================================
-// INPUT HANDLING
-// ============================================================
-
 void nextPage() {
-  currentPage = (Page)((currentPage + 1) % PAGE_COUNT);
-  lastCarouselMs = millis();
-  needsRedraw = true;
+    currentPage = (Page)((currentPage + 1) % PAGE_COUNT);
+    lastCarouselMs = millis();
+    needsRedraw = true;
 }
 
 void prevPage() {
-  int p = (int)currentPage - 1;
-  if (p < 0) p = PAGE_COUNT - 1;
-  currentPage = (Page)p;
-  lastCarouselMs = millis();
-  needsRedraw = true;
+    int p = (int)currentPage - 1;
+    if (p < 0) p = PAGE_COUNT - 1;
+    currentPage = (Page)p;
+    lastCarouselMs = millis();
+    needsRedraw = true;
 }
 
 void handleTouch() {
-#if TOUCH_ENABLED
-  TouchPoint t = readTouch();
-  if (!t.pressed) return;
+    TouchPoint t = readTouch();
+    if (!t.pressed) return;
 
-  lastMotionMs = millis();
-  screenAwake = true;
+    lastMotionMs = millis();
+    if (!screenAwake) { screenAwake = true; needsRedraw = true; return; }
 
-  // Gear button area
-  if (inBox(t.x, t.y, SCREEN_WIDTH - 90, 15, 75, 75)) {
-    settingsOpen = true;
-    needsRedraw = true;
-    return;
-  }
-
-  if (settingsOpen) {
-    // Save & Close button
-    if (inBox(t.x, t.y, 280, 430, 240, 60)) {
-      saveSettings();
-      settingsOpen = false;
-      needsRedraw = true;
+    if (inBox(t.x, t.y, SCREEN_W - 90, 15, 75, 40)) {
+        settingsOpen = !settingsOpen;
+        needsRedraw = true;
+        return;
     }
-    return;
-  }
 
-  // Very simple page swipe/tap zones until real gestures are added
-  if (t.x < 80) prevPage();
-  if (t.x > SCREEN_WIDTH - 80) nextPage();
+    if (settingsOpen) {
+        if (inBox(t.x, t.y, 280, 448, 240, 44)) {
+            saveSettings();
+            settingsOpen = false;
+            needsRedraw = true;
+        }
+        return;
+    }
 
-  // Timer buttons
-  if (currentPage == PAGE_TIMER) {
-    if (inBox(t.x, t.y, 220, 340, 150, 110)) {
-      cancelTimer();
-    }
-    if (inBox(t.x, t.y, 440, 340, 150, 110)) {
-      if (timerRunning) pauseTimer();
-      else startTimer();
-    }
-  }
+    if (t.x < 80)              prevPage();
+    if (t.x > SCREEN_W - 80)  nextPage();
 
-  // Stopwatch buttons
-  if (currentPage == PAGE_STOPWATCH) {
-    if (inBox(t.x, t.y, 210, 330, 170, 120)) {
-      resetStopwatch();
+    if (currentPage == PAGE_TIMER) {
+        if (inBox(t.x, t.y, 180, 355, 160, 60)) {
+            if (timerRunning || timerPaused) resetTimer(); else resetTimer();
+        }
+        if (inBox(t.x, t.y, 440, 355, 160, 60)) {
+            if (timerRunning) pauseTimer(); else startTimer();
+        }
     }
-    if (inBox(t.x, t.y, 440, 330, 170, 120)) {
-      if (stopwatchRunning) pauseStopwatch();
-      else startStopwatch();
+
+    if (currentPage == PAGE_STOPWATCH) {
+        if (inBox(t.x, t.y, 180, 345, 160, 60)) resetStopwatch();
+        if (inBox(t.x, t.y, 450, 345, 160, 60)) {
+            if (stopwatchRunning) pauseStopwatch(); else startStopwatch();
+        }
     }
-  }
-#endif
 }
 
 void handleMotionSensor() {
-  if (!motionWakeEnabled) return;
-
-  int motion = digitalRead(PIR_PIN);
-  if (motion == HIGH) {
-    lastMotionMs = millis();
-    if (!screenAwake) {
-      screenAwake = true;
-      needsRedraw = true;
-      Serial.println("[MOTION] Wake screen.");
+    if (!motionWakeEnabled) return;
+    if (digitalRead(PIR_PIN) == HIGH) {
+        lastMotionMs = millis();
+        if (!screenAwake) { screenAwake = true; needsRedraw = true; }
     }
-  }
-
-  if (screenAwake && millis() - lastMotionMs > screenTimeoutMs) {
-    screenAwake = false;
-    needsRedraw = true;
-    Serial.println("[SCREEN] Timed out.");
-  }
+    if (screenAwake && millis() - lastMotionMs > screenTimeoutMs) {
+        screenAwake = false;
+        needsRedraw = true;
+    }
 }
 
-// ============================================================
-// ARDUINO SETUP + LOOP
-// ============================================================
-
 void setup() {
-  Serial.begin(115200);
-  delay(500);
+    Serial.begin(115200);
+    delay(500);
 
-  Serial.println();
-  Serial.println("=================================");
-  Serial.println("DeskHub All-In-One Starting");
-  Serial.println("=================================");
+    Wire.begin(I2C_SDA, I2C_SCL, 400000);
+    ch422g_init();
 
-  pinMode(PIR_PIN, INPUT);
-  lastMotionMs = millis();
+    gfx->begin();
+    gfx->fillScreen(C_BG);
 
-  loadSettings();
-  displayBegin();
+    pinMode(TOUCH_INT, INPUT);
+    ts.begin();
+    ts.setRotation(ROTATION_NORMAL);
 
-  connectWiFi();
-  setupTime();
+    pinMode(PIR_PIN, INPUT);
+    lastMotionMs = millis();
 
-  fetchWeather();
-  setupSpotify();
+    loadSettings();
+    connectWiFi();
+    setupTime();
+    fetchWeather();
+    setupSpotify();
 
-  timerRemainingMs = ((long)timerHours * 3600L + (long)timerMinutes * 60L + timerSeconds) * 1000L;
-
-  needsRedraw = true;
+    timerRemainingMs = ((long)timerHours * 3600L + timerMinutes * 60L + timerSeconds) * 1000L;
+    needsRedraw = true;
 }
 
 void loop() {
-  handleMotionSensor();
-  handleTouch();
+    handleMotionSensor();
+    handleTouch();
+    updateTimer();
+    updateSpotify();
 
-  updateTimer();
-  updateSpotify();
-
-  if (WiFi.status() == WL_CONNECTED && millis() - lastWeatherFetchMs > weatherFetchIntervalMs) {
-    fetchWeather();
-    needsRedraw = true;
-  }
-
-  // Auto carousel only when settings is closed and screen is awake.
-  if (!settingsOpen && screenAwake && millis() - lastCarouselMs > carouselIntervalMs) {
-    nextPage();
-  }
-
-  // Redraw periodically so clock/stopwatch updates on placeholder serial too.
-  bool periodicRedraw = false;
-  if (millis() - lastSerialPagePrintMs > 1000) {
-    lastSerialPagePrintMs = millis();
-    if (currentPage == PAGE_CLOCK || currentPage == PAGE_TIMER || currentPage == PAGE_STOPWATCH) {
-      periodicRedraw = true;
+    if (WiFi.status() == WL_CONNECTED && millis() - lastWeatherFetchMs > weatherFetchIntervalMs) {
+        fetchWeather();
+        needsRedraw = true;
     }
-  }
 
-  if (needsRedraw || periodicRedraw) {
-    drawCurrentScreen();
-  }
+    if (!settingsOpen && screenAwake && millis() - lastCarouselMs > carouselIntervalMs)
+        nextPage();
 
-  delay(20);
+    bool periodicRedraw = false;
+    if (millis() - lastSerialPagePrintMs > 1000) {
+        lastSerialPagePrintMs = millis();
+        if (currentPage == PAGE_CLOCK || currentPage == PAGE_TIMER || currentPage == PAGE_STOPWATCH)
+            periodicRedraw = true;
+    }
+
+    if (needsRedraw || periodicRedraw)
+        drawCurrentScreen();
+
+    delay(20);
 }
